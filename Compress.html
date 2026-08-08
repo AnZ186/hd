@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Video Tool (Compress & Patch)</title>
+    
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <style>
+        body { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+        .drag-active { border-color: #8b5cf6 !important; background-color: #f5f3ff !important; }
+        .progress-bar-fill { transition: width 0.3s ease-in-out; }
+        .loader {
+            border-top-color: #8b5cf6;
+            -webkit-animation: spinner 1.5s linear infinite;
+            animation: spinner 1.5s linear infinite;
+        }
+        @keyframes spinner {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-slate-100 min-h-screen text-slate-800 flex flex-col">
+
+    <header class="bg-white shadow-sm py-4 border-b border-slate-200">
+        <div class="max-w-4xl mx-auto px-4 flex items-center justify-between">
+            <h1 class="text-2xl font-bold text-violet-600 flex items-center gap-2">
+                <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"></path></svg>
+                NanoStudio Lokal
+            </h1>
+            <span class="text-xs font-semibold text-violet-700 bg-violet-100 px-3 py-1 rounded-full border border-violet-200">
+                Node.js Backend
+            </span>
+        </div>
+    </header>
+
+    <main class="flex-grow max-w-3xl mx-auto px-4 py-10 w-full">
+        <div class="bg-white rounded-3xl shadow-xl overflow-hidden border border-slate-100">
+            <div class="p-6 sm:p-10">
+                
+                <div class="text-center mb-8">
+                    <h2 class="text-2xl font-bold text-slate-800 mb-2">Pusat Pemrosesan Video</h2>
+                    <p class="text-slate-500 text-sm">Upload video berukuran besar. Diproses aman secara lokal via server Node.js.</p>
+                </div>
+                
+                <div id="drop-zone" class="border-2 border-dashed border-slate-300 rounded-2xl p-8 sm:p-12 text-center cursor-pointer transition-all duration-200 hover:bg-slate-50 hover:border-violet-400 relative group mb-8">
+                    <input type="file" id="file-input" accept="video/mp4,video/webm,video/quicktime" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
+                    <div class="pointer-events-none flex flex-col items-center">
+                        <div class="w-16 h-16 bg-violet-100 text-violet-600 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                            <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+                        </div>
+                        <h3 class="text-lg font-semibold text-slate-700" id="file-name">Pilih atau Tarik File Video Kesini</h3>
+                        <p class="text-sm text-slate-500 mt-1" id="file-size-display">Tidak ada batas memori browser (Bisa untuk file besar)</p>
+                    </div>
+                </div>
+
+                <div id="settings-area" class="hidden space-y-6">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        
+                        <!-- Tombol Kompres -->
+                        <button id="btn-compress" class="bg-blue-600 hover:bg-blue-700 text-white p-4 rounded-xl shadow-lg transition-transform transform hover:-translate-y-0.5 flex flex-col items-center text-center">
+                            <svg class="w-8 h-8 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                            <span class="font-bold text-lg">Kompres (Lossless)</span>
+                            <span class="text-xs text-blue-200 mt-1">Re-encode FFmpeg (CRF 18)</span>
+                        </button>
+
+                        <!-- Tombol Patch -->
+                        <button id="btn-patch" class="bg-violet-600 hover:bg-violet-700 text-white p-4 rounded-xl shadow-lg transition-transform transform hover:-translate-y-0.5 flex flex-col items-center text-center">
+                            <svg class="w-8 h-8 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path></svg>
+                            <span class="font-bold text-lg">Patch Metadata</span>
+                            <span class="text-xs text-violet-200 mt-1">Aibanto MP4 Container Logic</span>
+                        </button>
+                        
+                    </div>
+                </div>
+
+                <div id="progress-area" class="hidden space-y-4">
+                    <div class="text-center mb-2">
+                        <div class="loader ease-linear rounded-full border-4 border-t-4 border-slate-200 h-10 w-10 mx-auto mb-3"></div>
+                        <h4 class="text-lg font-bold text-slate-700" id="progress-status">Menyiapkan...</h4>
+                        <p class="text-sm text-slate-500" id="progress-detail">Mohon tunggu sebentar.</p>
+                    </div>
+                    
+                    <div class="w-full bg-slate-200 rounded-full h-4 mb-1 overflow-hidden shadow-inner">
+                        <div id="progress-bar" class="bg-violet-600 h-4 rounded-full progress-bar-fill" style="width: 0%"></div>
+                    </div>
+                    <div class="flex justify-between text-xs font-semibold text-slate-500">
+                        <span id="progress-percent">0%</span>
+                        <span id="progress-time">Sedang mengupload...</span>
+                    </div>
+                </div>
+
+                <div id="result-area" class="hidden mt-8 border-t border-slate-100 pt-8">
+                    <div class="bg-green-50 border border-green-200 rounded-2xl p-6 text-center mb-6">
+                        <div class="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path></svg>
+                        </div>
+                        <h3 class="text-xl font-bold text-green-800 mb-1" id="result-title">Proses Selesai!</h3>
+                        <p class="text-green-600 font-medium">Video Anda berhasil diproses oleh server.</p>
+                        
+                        <div class="mt-6 flex flex-col sm:flex-row items-center justify-center gap-4 sm:gap-8">
+                            <div class="text-center">
+                                <span class="block text-xs font-semibold text-slate-500 uppercase tracking-wide">Ukuran Awal</span>
+                                <span class="block text-xl font-bold text-slate-700" id="res-old-size">0 MB</span>
+                            </div>
+                            <div class="hidden sm:block text-slate-300">
+                                <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8l4 4m0 0l-4 4m4-4H3"></path></svg>
+                            </div>
+                            <div class="text-center">
+                                <span class="block text-xs font-semibold text-slate-500 uppercase tracking-wide">Ukuran Baru</span>
+                                <span class="block text-2xl font-bold text-green-600" id="res-new-size">0 MB</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-col sm:flex-row justify-center gap-4">
+                        <button id="reset-btn" class="px-6 py-3 rounded-xl font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors">
+                            Proses File Lain
+                        </button>
+                        <a id="download-btn" href="#" download="processed_video.mp4" class="bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-8 rounded-xl shadow-lg transition-transform transform hover:-translate-y-0.5 flex items-center justify-center gap-2">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                            Simpan Video
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Custom Message Box -->
+        <div id="message-box" class="fixed bottom-5 left-1/2 transform -translate-x-1/2 bg-slate-800 text-white px-6 py-3 rounded-full shadow-2xl opacity-0 pointer-events-none transition-opacity duration-300 z-50 flex items-center gap-2">
+            <svg class="w-5 h-5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            <span id="message-text" class="font-medium">Pesan sistem</span>
+        </div>
+    </main>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // UI Elements mapping
+            const dropZone = document.getElementById('drop-zone');
+            const fileInput = document.getElementById('file-input');
+            const fileNameDisplay = document.getElementById('file-name');
+            const fileSizeDisplay = document.getElementById('file-size-display');
+            
+            const settingsArea = document.getElementById('settings-area');
+            const btnCompress = document.getElementById('btn-compress');
+            const btnPatch = document.getElementById('btn-patch');
+            
+            const progressArea = document.getElementById('progress-area');
+            const resultArea = document.getElementById('result-area');
+            const resetBtn = document.getElementById('reset-btn');
+            
+            // Progress UI
+            const progressStatus = document.getElementById('progress-status');
+            const progressDetail = document.getElementById('progress-detail');
+            const progressBar = document.getElementById('progress-bar');
+            const progressPercent = document.getElementById('progress-percent');
+            
+            // Result UI
+            const resultTitle = document.getElementById('result-title');
+            const resOldSize = document.getElementById('res-old-size');
+            const resNewSize = document.getElementById('res-new-size');
+            const downloadBtn = document.getElementById('download-btn');
+            
+            // System Notification
+            const msgBox = document.getElementById('message-box');
+            const msgText = document.getElementById('message-text');
+
+            let currentFile = null;
+
+            // Helper format Bytes
+            function formatBytes(bytes) {
+                if (bytes === 0) return '0 Bytes';
+                const k = 1024;
+                const dm = 2;
+                const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+            }
+
+            function showMessage(text) {
+                msgText.textContent = text;
+                msgBox.classList.remove('opacity-0');
+                setTimeout(() => msgBox.classList.add('opacity-0'), 4000);
+            }
+
+            function handleFile(file) {
+                if (!file) return;
+                
+                if (!file.type.startsWith('video/')) {
+                    showMessage('Hanya file video (MP4, WEBM, dll) yang diperbolehkan!');
+                    return;
+                }
+
+                currentFile = file;
+                fileNameDisplay.textContent = file.name;
+                fileNameDisplay.classList.replace('text-slate-700', 'text-violet-600');
+                fileSizeDisplay.textContent = `Ukuran: ${formatBytes(file.size)}`;
+                
+                settingsArea.classList.remove('hidden');
+                resultArea.classList.add('hidden');
+            }
+
+            fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(ev => {
+                dropZone.addEventListener(ev, (e) => { e.preventDefault(); e.stopPropagation(); }, false);
+            });
+
+            ['dragenter', 'dragover'].forEach(ev => {
+                dropZone.addEventListener(ev, () => dropZone.classList.add('drag-active'), false);
+            });
+
+            ['dragleave', 'drop'].forEach(ev => {
+                dropZone.addEventListener(ev, () => dropZone.classList.remove('drag-active'), false);
+            });
+
+            dropZone.addEventListener('drop', (e) => handleFile(e.dataTransfer.files[0]));
+
+            // Master function buat handle Hit API ke Backend
+            function sendToServer(endpointUrl, actionName, downloadPrefix) {
+                if (!currentFile) return;
+
+                settingsArea.classList.add('hidden');
+                dropZone.classList.add('hidden');
+                progressArea.classList.remove('hidden');
+                
+                progressBar.style.width = `0%`;
+                progressPercent.textContent = `0%`;
+                progressStatus.textContent = "Tahap 1: Mengunggah Video...";
+                progressDetail.textContent = "Sedang mentransfer file ke server lokal...";
+
+                const formData = new FormData();
+                formData.append('video', currentFile);
+
+                // Gunakan XMLHttpRequest biar bisa pantau progress upload (persentase)
+                const xhr = new XMLHttpRequest();
+                
+                // [UBAH] Jangan pakai localhost, pakai URL relatif agar ngikutin domain Railway
+                xhr.open('POST', endpointUrl, true);
+                xhr.responseType = 'blob'; 
+
+                xhr.upload.onprogress = (e) => {
+                    if (e.lengthComputable) {
+                        const percentComplete = Math.round((e.loaded / e.total) * 100);
+                        progressBar.style.width = `${percentComplete}%`;
+                        progressPercent.textContent = `${percentComplete}%`;
+                        
+                        if (percentComplete === 100) {
+                            progressStatus.textContent = `Tahap 2: Sedang di-${actionName}...`;
+                            progressDetail.textContent = actionName === 'Kompres' 
+                                ? "Tunggu sebentar. Server sedang melakukan Re-encode Lossless."
+                                : "Server sedang memodifikasi Container Metadata MP4.";
+                                
+                            // Ubah style loading jadi muter
+                            progressBar.style.width = '100%';
+                            progressBar.classList.add('animate-pulse');
+                        }
+                    }
+                };
+
+                xhr.onload = function() {
+                    progressBar.classList.remove('animate-pulse');
+                    if (this.status === 200) {
+                        const blob = this.response;
+                        const url = window.URL.createObjectURL(blob);
+                        
+                        const oldSize = currentFile.size;
+                        const newSize = blob.size;
+
+                        resultTitle.textContent = `${actionName} Selesai!`;
+                        resOldSize.textContent = formatBytes(oldSize);
+                        resNewSize.textContent = formatBytes(newSize);
+                        
+                        downloadBtn.href = url;
+                        downloadBtn.download = `${downloadPrefix}_${currentFile.name}`;
+
+                        progressArea.classList.add('hidden');
+                        resultArea.classList.remove('hidden');
+                    } else {
+                        showMessage(`Server gagal melakukan proses ${actionName}. Cek console server!`);
+                        progressArea.classList.add('hidden');
+                        dropZone.classList.remove('hidden');
+                        settingsArea.classList.remove('hidden');
+                    }
+                };
+
+                xhr.onerror = function() {
+                    progressBar.classList.remove('animate-pulse');
+                    showMessage("Error jaringan. Pastikan 'node server.js' sedang berjalan!");
+                    progressArea.classList.add('hidden');
+                    dropZone.classList.remove('hidden');
+                    settingsArea.classList.remove('hidden');
+                };
+
+                xhr.send(formData);
+            }
+
+            // Event Listener masing-masing tombol
+            btnCompress.addEventListener('click', () => {
+                sendToServer('/api/compress', 'Kompres', 'Compressed');
+            });
+
+            btnPatch.addEventListener('click', () => {
+                sendToServer('/api/patch', 'Patch', 'Patched');
+            });
+
+            // Tombol Reset
+            resetBtn.addEventListener('click', () => {
+                currentFile = null;
+                fileInput.value = '';
+                fileNameDisplay.textContent = 'Pilih atau Tarik File Video Kesini';
+                fileNameDisplay.classList.replace('text-violet-600', 'text-slate-700');
+                fileSizeDisplay.textContent = 'Tidak ada batas memori browser (Bisa untuk file besar)';
+                
+                resultArea.classList.add('hidden');
+                dropZone.classList.remove('hidden');
+            });
+        });
+    </script>
+</body>
+</html>
