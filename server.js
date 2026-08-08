@@ -124,7 +124,8 @@ app.post('/api/patch', upload.single('video'), (req, res) => {
     }
 });
 
-app.listen(PORT, () => {
-    console.log(`🚀 Server berjalan di http://localhost:${PORT}`);
-    console.log(`⚠️  PENTING: Pastikan program FFmpeg sudah terinstall di PC/OS Anda!`);
+// GANTI BAGIAN PALING BAWAH INI:
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Server berjalan di PORT: ${PORT}`);
+    console.log(`⚠️  PENTING: Pastikan program FFmpeg sudah terinstall di server!`);
 });
