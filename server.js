@@ -1,14 +1,20 @@
 const express = require('express');
 const multer = require('multer');
 const ffmpeg = require('fluent-ffmpeg');
-const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
+const ffmpegPath = require('ffmpeg-static');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
 const aibanto = require('./aibanto.js');
 
 // Pakai binary ffmpeg yang ikut terbundle di node_modules (tidak butuh apt install)
-ffmpeg.setFfmpegPath(ffmpegInstaller.path);
+ffmpeg.setFfmpegPath(ffmpegPath);
+
+// Nama file pendek & acak untuk file sementara di server (hindari nama kepanjangan)
+function shortName() {
+    return crypto.randomBytes(6).toString('hex');
+}
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -40,12 +46,9 @@ const storage = multer.diskStorage({
         cb(null, uploadDir);
     },
     filename: (req, file, cb) => {
-        // Sanitasi nama file: hilangkan path traversal ("../", "..\\") & karakter berbahaya
-        const safeBase = path.basename(file.originalname)
-            .replace(/\.\.+/g, '')
-            .replace(/[^a-zA-Z0-9._-]/g, '_')
-            .slice(0, 100);
-        cb(null, Date.now() + '-' + (safeBase || 'video'));
+        // Nama file pendek & acak untuk penyimpanan internal
+        const ext = path.extname(file.originalname).toLowerCase().slice(0, 10);
+        cb(null, Date.now() + '-' + shortName() + (ext || '.mp4'));
     }
 });
 
@@ -131,7 +134,7 @@ app.post('/api/compress', rateLimit, uploadWithLimits, (req, res) => {
     }
 
     const inputPath = req.file.path;
-    const outputPath = path.join(uploadDir, 'compressed_' + req.file.filename);
+    const outputPath = path.join(uploadDir, 'compressed_' + shortName() + '.mp4');
     
     // Ambil level kompresi dari request (Default CRF 28)
     const crfValue = req.body.compression || '28';
@@ -176,7 +179,7 @@ app.post('/api/patch', rateLimit, uploadWithLimits, (req, res) => {
     }
 
     const inputPath = req.file.path;
-    const outputPath = path.join(uploadDir, 'patched_' + req.file.filename);
+    const outputPath = path.join(uploadDir, 'patched_' + shortName() + '.mp4');
     
     console.log(`\n[+] Memulai proses PATCH: ${req.file.originalname}`);
 
