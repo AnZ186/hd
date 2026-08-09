@@ -1,7 +1,6 @@
 const express = require('express');
 const multer = require('multer');
 const ffmpeg = require('fluent-ffmpeg');
-const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 
@@ -10,15 +9,17 @@ const aibanto = require('./aibanto.js');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Izinkan HTML mengakses API ini
-app.use(cors());
+// TIDAK pakai express.static(__dirname) — itu mengekspos seluruh direktori
+// (server.js, aibanto.js, package.json, folder uploads/) ke publik di Railway.
+// Hanya index.html yang disajikan eksplisit di rute; API & sisanya tidak.
 
-// [BARU] Setup agar Node.js bisa menampilkan index.html ke publik
-app.use(express.static(__dirname));
-
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
+app.get(['/', '/index.html'], (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'), (err) => {
+        if (err) res.status(500).send('Gagal memuat index.html');
+    });
 });
+
+app.get('/favicon.ico', (req, res) => res.status(204).end());
 
 // Buat folder 'uploads' jika belum ada
 const uploadDir = path.join(__dirname, 'uploads');
@@ -26,20 +27,42 @@ if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir);
 }
 
+// Ekstensi video yang diperbolehkan (anti penyisipan file berbahaya)
+const ALLOWED_EXTENSIONS = new Set(['.mp4', '.webm', '.mov', '.m4v', '.avi', '.mkv']);
+
 // Konfigurasi Multer (Simpan file sementara ke Harddisk, BUKAN RAM)
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
         cb(null, uploadDir);
     },
     filename: (req, file, cb) => {
-        // Beri nama unik agar tidak bentrok
-        cb(null, Date.now() + '-' + file.originalname.replace(/\s+/g, '_'));
+        // Sanitasi nama file: hilangkan path traversal ("../", "..\\") & karakter berbahaya
+        const safeBase = path.basename(file.originalname)
+            .replace(/\.\.+/g, '')
+            .replace(/[^a-zA-Z0-9._-]/g, '_')
+            .slice(0, 100);
+        cb(null, Date.now() + '-' + (safeBase || 'video'));
     }
 });
+
+// Validator tipe file: hanya video yang diperbolehkan
+const fileFilter = (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    const mimeOk = file.mimetype
+        ? file.mimetype.startsWith('video/') || file.mimetype === 'application/octet-stream'
+        : true;
+    if (ALLOWED_EXTENSIONS.has(ext) && mimeOk) {
+        cb(null, true);
+    } else {
+        cb(new Error('Tipe file tidak diizinkan. Hanya video (MP4, WEBM, MOV, dll).'));
+    }
+};
+
 // Batas maksimal upload: 10GB
 const upload = multer({ 
     storage: storage,
-    limits: { fileSize: 10 * 1024 * 1024 * 1024 } 
+    limits: { fileSize: 10 * 1024 * 1024 * 1024 },
+    fileFilter: fileFilter
 });
 
 // Endpoint Utama: Terima video dan kembalikan hasil kompresi
@@ -71,7 +94,8 @@ app.post('/api/compress', upload.single('video'), (req, res) => {
             console.log(`[+] Selesai: ${req.file.originalname}. Mengirim ke client...`);
             
             // Kirim file hasil kompresi ke browser untuk didownload
-            res.download(outputPath, `NanoCompressed_${req.file.originalname}`, (err) => {
+            const safeName = path.basename(req.file.originalname).replace(/[^a-zA-Z0-9._-]/g, '_');
+            res.download(outputPath, `NanoCompressed_${safeName}`, (err) => {
                 // Bersihkan file dari harddisk setelah selesai di-download (Hemat Ruang)
                 if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
                 if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
@@ -111,7 +135,8 @@ app.post('/api/patch', upload.single('video'), (req, res) => {
         console.log(`    - Report Info: ${JSON.stringify(patchResult.report)}`);
 
         // 4. Kirim file hasil patch ke user untuk didownload
-        res.download(outputPath, `Patched_${req.file.originalname}`, (err) => {
+        const safeName = path.basename(req.file.originalname).replace(/[^a-zA-Z0-9._-]/g, '_');
+        res.download(outputPath, `Patched_${safeName}`, (err) => {
             // 5. Bersihkan file sampah (Input dan Output) setelah selesai
             if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
             if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
@@ -122,6 +147,18 @@ app.post('/api/patch', upload.single('video'), (req, res) => {
         if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
         res.status(500).json({ error: 'Gagal mempatch video: ' + error.message });
     }
+});
+
+// Handler error global: tangkap error dari Multer (file terlalu besar / tipe tidak valid)
+app.use((err, req, res, next) => {
+    if (err instanceof multer.MulterError) {
+        return res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'File terlalu besar (maks 10GB).' : err.message });
+    }
+    if (err.message && err.message.includes('Tipe file tidak diizinkan')) {
+        return res.status(400).json({ error: err.message });
+    }
+    console.error('[-] Unhandled error:', err);
+    res.status(500).json({ error: 'Terjadi kesalahan pada server.' });
 });
 
 // GANTI BAGIAN PALING BAWAH INI:
