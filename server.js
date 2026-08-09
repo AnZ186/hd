@@ -127,47 +127,159 @@ function rateLimit(req, res, next) {
     next();
 }
 
-// Endpoint Utama: Terima video dan kembalikan hasil kompresi
+// =============================================================
+// SISTEM JOB ASYNC
+// Railway punya batas keras 300 detik per request di proxy.
+// Upload + proses + download dalam SATU request bisa lewat batas itu.
+// Jadi: upload balas cepat dengan jobId → proses jalan di background
+// → client polling status → download hasil via request terpisah.
+// =============================================================
+const jobs = new Map();
+const JOB_TTL_MS = 30 * 60 * 1000; // Job dibersihkan setelah 30 menit
+
+function createJob(req, action) {
+    const job = {
+        id: shortName() + shortName(),
+        action: action,
+        status: 'queued',
+        inputPath: req.file.path,
+        outputPath: null,
+        fileName: path.basename(req.file.originalname || 'video.mp4'),
+        outputSize: 0,
+        error: null,
+        createdAt: Date.now(),
+    };
+    jobs.set(job.id, job);
+    return job;
+}
+
+function cleanupJobFiles(job) {
+    if (job.inputPath && fs.existsSync(job.inputPath)) fs.unlinkSync(job.inputPath);
+    if (job.outputPath && fs.existsSync(job.outputPath)) fs.unlinkSync(job.outputPath);
+}
+
+// Pembersih berkala: buang job & file yang sudah basi
+setInterval(() => {
+    const now = Date.now();
+    for (const [id, job] of jobs) {
+        if (now - job.createdAt > JOB_TTL_MS) {
+            cleanupJobFiles(job);
+            jobs.delete(id);
+        }
+    }
+}, 60 * 1000);
+
+// Endpoint: Terima video, langsung balas jobId, proses di background
 app.post('/api/compress', rateLimit, uploadWithLimits, (req, res) => {
     if (!req.file) {
         return res.status(400).json({ error: 'Video tidak ditemukan' });
     }
 
-    const inputPath = req.file.path;
-    const outputPath = path.join(uploadDir, 'compressed_' + shortName() + '.mp4');
-    
-    // Ambil level kompresi dari request (Default CRF 28)
-    const crfValue = req.body.compression || '28';
+    const job = createJob(req, 'compress');
+    job.status = 'processing';
+    res.json({ jobId: job.id });
 
-    console.log(`[+] Memulai re-encode Lossless: ${req.file.originalname}`);
+    const outputPath = path.join(uploadDir, 'compressed_' + job.id + '.mp4');
+    job.outputPath = outputPath;
 
-    // Proses Kompresi menggunakan FFmpeg
-    ffmpeg(inputPath)
+    console.log(`[+] Job ${job.id}: Re-encode Lossless dimulai: ${job.fileName}`);
+
+    // Proses Kompresi di background (tidak memblokir request upload)
+    ffmpeg(job.inputPath)
         .outputOptions([
             "-vcodec libx264",     // Codec standar H.264
             "-crf 18",             // CRF 18 = Visually Lossless (Kualitas setara asli)
             "-preset slow",        // Algoritma lambat agar file ditekan semaksimal mungkin tanpa burik
             "-c:a copy"            // Audio stream di-copy mentah (tanpa re-encode, 100% ori)
-            
-            // Catatan: Baris "-vf scale..." sengaja saya hapus agar resolusi (misal 4K/2K) tetap dipertahankan.
         ])
         .save(outputPath)
         .on('end', () => {
-            console.log(`[+] Selesai: ${req.file.originalname}. Mengirim ke client...`);
-            
-            // Kirim file hasil kompresi ke browser untuk didownload
-            const safeName = path.basename(req.file.originalname).replace(/[^a-zA-Z0-9._-]/g, '_');
-            res.download(outputPath, `NanoCompressed_${safeName}`, (err) => {
-                // Bersihkan file dari harddisk setelah selesai di-download (Hemat Ruang)
-                if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
-                if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
-            });
+            job.status = 'done';
+            job.outputSize = fs.statSync(outputPath).size;
+            if (fs.existsSync(job.inputPath)) fs.unlinkSync(job.inputPath);
+            console.log(`[+] Job ${job.id}: Selesai (${job.outputSize} bytes).`);
         })
         .on('error', (err) => {
-            console.error('[-] Error Kompresi:', err);
-            if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
-            res.status(500).json({ error: 'Gagal mengkompres video.' });
+            job.status = 'failed';
+            job.error = String(err.message || err);
+            console.error(`[-] Job ${job.id}: Error Kompresi:`, err);
+            cleanupJobFiles(job);
         });
+});
+
+// -------------------------------------------------------------
+// [ENDPOINT BARU] /api/patch - Untuk modifikasi container MP4
+// -------------------------------------------------------------
+app.post('/api/patch', rateLimit, uploadWithLimits, (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ error: 'Video tidak ditemukan' });
+    }
+
+    const job = createJob(req, 'patch');
+    job.status = 'processing';
+    res.json({ jobId: job.id });
+
+    const outputPath = path.join(uploadDir, 'patched_' + job.id + '.mp4');
+    job.outputPath = outputPath;
+
+    console.log(`\n[+] Job ${job.id}: Proses PATCH dimulai: ${job.fileName}`);
+
+    // Proses patch di background biar request upload balas cepat
+    setImmediate(() => {
+        try {
+            // 1. Baca file video mentah sebagai Binary Buffer dari Harddisk
+            const inputBuffer = fs.readFileSync(job.inputPath);
+
+            // 2. Kirim Buffer tersebut ke dalam Aibanto Patcher logic
+            const patchResult = aibanto.patchWithReport(inputBuffer, { branding: true });
+
+            // 3. Simpan byte yang sudah dimodifikasi kembali ke Harddisk
+            fs.writeFileSync(outputPath, patchResult.bytes);
+
+            job.status = 'done';
+            job.outputSize = fs.statSync(outputPath).size;
+            if (fs.existsSync(job.inputPath)) fs.unlinkSync(job.inputPath);
+
+            console.log(`[+] Job ${job.id}: Sukses nge-patch! (${job.outputSize} bytes)`);
+            console.log(`    - Report Info: ${JSON.stringify(patchResult.report)}`);
+        } catch (error) {
+            job.status = 'failed';
+            job.error = error.message;
+            console.error(`[-] Job ${job.id}: Error saat patching:`, error);
+            cleanupJobFiles(job);
+        }
+    });
+});
+
+// Cek status job (dipanggil client untuk polling)
+app.get('/api/jobs/:id', (req, res) => {
+    const job = jobs.get(req.params.id);
+    if (!job) {
+        return res.status(404).json({ error: 'Job tidak ditemukan (mungkin sudah kedaluwarsa).' });
+    }
+    res.json({
+        id: job.id,
+        action: job.action,
+        status: job.status,
+        fileName: job.fileName,
+        outputSize: job.outputSize,
+        error: job.error,
+    });
+});
+
+// Download hasil job melalui request terpisah (anti timeout 5 menit proxy)
+app.get('/api/download/:id', (req, res) => {
+    const job = jobs.get(req.params.id);
+    if (!job || job.status !== 'done' || !job.outputPath || !fs.existsSync(job.outputPath)) {
+        return res.status(404).json({ error: 'Hasil belum tersedia atau kedaluwarsa.' });
+    }
+
+    const prefix = job.action === 'compress' ? 'NanoCompressed' : 'Patched';
+    const safeName = job.fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+    res.download(job.outputPath, `${prefix}_${safeName}`, () => {
+        cleanupJobFiles(job);
+        jobs.delete(job.id);
+    });
 });
 
 // -------------------------------------------------------------

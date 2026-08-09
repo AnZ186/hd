@@ -450,6 +450,76 @@
 
             dropZone.addEventListener('drop', (e) => handleFile(e.dataTransfer.files[0]));
 
+            // Helper UI untuk "Tahap 2: pemrosesan di server"
+            function updateProcessingUI(actionName) {
+                progressStatus.textContent = `Tahap 2: Sedang di-${actionName} di server...`;
+                progressDetail.textContent = actionName === 'Kompres'
+                    ? 'Tunggu sebentar. Server sedang melakukan Re-encode Lossless (bisa beberapa menit).'
+                    : 'Server sedang memodifikasi Container Metadata MP4.';
+                progressTime.textContent = 'Diproses di server...';
+            }
+
+            function finishWithError(message) {
+                showMessage(message, 'error');
+                progressArea.classList.add('hidden');
+                dropZone.classList.remove('hidden');
+                fileInfo.classList.remove('hidden');
+                settingsArea.classList.remove('hidden');
+            }
+
+            // Polling status job sampai selesai/gagal, lalu tampilkan hasil & link download
+            function pollJob(jobId, actionName, downloadPrefix) {
+                updateProcessingUI(actionName);
+                progressBar.style.width = '100%';
+                progressBar.classList.add('animate-pulse');
+
+                const pollTimer = setInterval(async () => {
+                    try {
+                        const resp = await fetch(`/api/jobs/${jobId}`);
+                        const data = await resp.json();
+
+                        if (data.status === 'done') {
+                            clearInterval(pollTimer);
+                            progressBar.classList.remove('animate-pulse');
+
+                            const oldSize = currentFile.size;
+                            const newSize = data.outputSize || oldSize;
+
+                            resultTitle.textContent = `${actionName} Selesai!`;
+                            resultSubtitle.textContent = `Video ${currentFile.name} berhasil diproses.`;
+                            resOldSize.textContent = formatBytes(oldSize);
+                            resNewSize.textContent = formatBytes(newSize);
+
+                            if (newSize < oldSize) {
+                                const saved = Math.round((1 - newSize / oldSize) * 100);
+                                resSavings.textContent = `Hemat ${saved}% ukuran file (${formatBytes(oldSize - newSize)})`;
+                                resSavings.style.color = 'rgb(52 211 153)';
+                            } else {
+                                resSavings.textContent = `Ukuran baru: ${formatBytes(newSize)}`;
+                                resSavings.style.color = 'rgb(148 163 184)';
+                            }
+                            resNewSize.style.color = newSize < oldSize ? 'rgb(52 211 153)' : 'rgb(148 163 184)';
+
+                            // Download via endpoint terpisah (anti timeout proxy 5 menit)
+                            downloadBtn.href = `/api/download/${jobId}`;
+                            downloadBtn.download = `${downloadPrefix}_${currentFile.name}`;
+
+                            progressArea.classList.add('hidden');
+                            resultArea.classList.remove('hidden');
+                            showMessage('Proses berhasil diselesaikan', 'success');
+                        } else if (data.status === 'failed') {
+                            clearInterval(pollTimer);
+                            progressBar.classList.remove('animate-pulse');
+                            finishWithError(`Proses ${actionName} gagal di server${data.error ? ': ' + data.error : '.'}`);
+                        }
+                    } catch (e) {
+                        clearInterval(pollTimer);
+                        progressBar.classList.remove('animate-pulse');
+                        finishWithError('Error memantau status job. Coba lagi.');
+                    }
+                }, 2000);
+            }
+
             // Master function buat handle Hit API ke Backend
             function sendToServer(endpointUrl, actionName, downloadPrefix) {
                 if (!currentFile) return;
@@ -473,7 +543,7 @@
 
                 // URL relatif agar ngikutin domain server
                 xhr.open('POST', endpointUrl, true);
-                xhr.responseType = 'blob';
+                xhr.responseType = 'json';
 
                 // Kirim token owner sebagai header jika diisi
                 if (tokenInput.value.trim()) {
@@ -487,11 +557,7 @@
                         progressPercent.textContent = `${percentComplete}%`;
 
                         if (percentComplete === 100) {
-                            progressStatus.textContent = `Tahap 2: Sedang di-${actionName}...`;
-                            progressDetail.textContent = actionName === 'Kompres'
-                                ? 'Tunggu sebentar. Server sedang melakukan Re-encode Lossless.'
-                                : 'Server sedang memodifikasi Container Metadata MP4.';
-                            progressTime.textContent = 'Diproses di server...';
+                            updateProcessingUI(actionName);
                             progressBar.style.width = '100%';
                             progressBar.classList.add('animate-pulse');
                         }
@@ -499,41 +565,11 @@
                 };
 
                 xhr.onload = function() {
-                    progressBar.classList.remove('animate-pulse');
-                    if (this.status === 200) {
-                        const blob = this.response;
-                        const url = window.URL.createObjectURL(blob);
-
-                        const oldSize = currentFile.size;
-                        const newSize = blob.size;
-
-                        resultTitle.textContent = `${actionName} Selesai!`;
-                        resultSubtitle.textContent = `Video ${currentFile.name} berhasil diproses.`;
-                        resOldSize.textContent = formatBytes(oldSize);
-                        resNewSize.textContent = formatBytes(newSize);
-
-                        if (newSize < oldSize) {
-                            const saved = Math.round((1 - newSize / oldSize) * 100);
-                            resSavings.textContent = `Hemat ${saved}% ukuran file (${formatBytes(oldSize - newSize)})`;
-                            resSavings.style.color = 'rgb(52 211 153)';
-                        } else {
-                            resSavings.textContent = `Ukuran baru: ${formatBytes(newSize)}`;
-                            resSavings.style.color = 'rgb(148 163 184)';
-                        }
-                        resNewSize.style.color = newSize < oldSize ? 'rgb(52 211 153)' : 'rgb(148 163 184)';
-
-                        downloadBtn.href = url;
-                        downloadBtn.download = `${downloadPrefix}_${currentFile.name}`;
-
-                        progressArea.classList.add('hidden');
-                        resultArea.classList.remove('hidden');
-                        showMessage('Proses berhasil diselesaikan', 'success');
+                    if (this.status === 200 && this.response && this.response.jobId) {
+                        // Upload selesai, mulai polling status job di background
+                        pollJob(this.response.jobId, actionName, downloadPrefix);
                     } else {
-                        showMessage(`Server gagal melakukan proses ${actionName}. Cek console server!`, 'error');
-                        progressArea.classList.add('hidden');
-                        dropZone.classList.remove('hidden');
-                        fileInfo.classList.remove('hidden');
-                        settingsArea.classList.remove('hidden');
+                        finishWithError(`Upload ${actionName} gagal. Cek console server!`);
                     }
                 };
 
