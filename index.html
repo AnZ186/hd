@@ -115,6 +115,13 @@
         <div class="bg-white/[0.03] rounded-3xl border border-white/10 shadow-2xl shadow-black/40 backdrop-blur-xl overflow-hidden fade-up">
             <div class="p-5 sm:p-10">
 
+                <!-- Access Token -->
+                <div class="flex items-center gap-3 bg-white/[0.03] border border-white/10 rounded-2xl px-4 py-3 mb-6 fade-up">
+                    <svg class="w-5 h-5 text-violet-400 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"/></svg>
+                    <input id="token-input" type="password" placeholder="Token akses (opsional — owner untuk file besar)" autocomplete="off" class="flex-1 min-w-0 bg-transparent text-sm text-slate-200 placeholder-slate-500 focus:outline-none" />
+                    <button id="token-toggle" type="button" class="text-xs font-semibold text-slate-400 hover:text-slate-200 shrink-0 cursor-pointer" title="Tampilkan/Sembunyikan">Lihat</button>
+                </div>
+
                 <!-- Drop Zone -->
                 <div id="drop-zone" class="group border-2 border-dashed border-white/10 rounded-2xl p-8 sm:p-12 text-center cursor-pointer transition-all duration-200 hover:border-violet-400/50 hover:bg-violet-500/5 relative" role="button" tabindex="0" aria-label="Pilih atau tarik file video">
                     <input type="file" id="file-input" accept="video/mp4,video/webm,video/quicktime" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 sr-only" />
@@ -123,7 +130,7 @@
                             <svg class="w-7 h-7" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
                         </div>
                         <h3 class="text-lg font-semibold text-slate-100" id="file-name">Pilih atau Tarik File Video</h3>
-                        <p class="text-sm text-slate-500 mt-1" id="file-size-display">MP4 · WEBM · MOV — bisa untuk file besar</p>
+                        <p class="text-sm text-slate-500 mt-1" id="file-size-display">MP4 · WEBM · MOV — max 50MB (token owner untuk 10GB)</p>
                         <span class="mt-4 inline-flex items-center gap-2 text-xs font-semibold text-violet-300 bg-violet-500/10 rounded-full px-4 py-2 border border-violet-500/20 group-hover:bg-violet-500/20 transition-colors">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
                             Pilih File
@@ -296,6 +303,10 @@
             const btnCompress = document.getElementById('btn-compress');
             const btnSettings = document.getElementById('btn-settings');
 
+            // Access token
+            const tokenInput = document.getElementById('token-input');
+            const tokenToggle = document.getElementById('token-toggle');
+
             const progressArea = document.getElementById('progress-area');
             const resultArea = document.getElementById('result-area');
             const resetBtn = document.getElementById('reset-btn');
@@ -358,11 +369,33 @@
                 msgTimer = setTimeout(() => msgBox.classList.add('opacity-0'), 4000);
             }
 
+            // Limit upload: guest 50MB, owner 10GB (mirror server)
+            const GUEST_MAX = 50 * 1024 * 1024;
+            const OWNER_MAX = 10 * 1024 * 1024 * 1024;
+
+            function currentLimit() {
+                return tokenInput.value.trim() ? OWNER_MAX : GUEST_MAX;
+            }
+            function isOwner() {
+                return tokenInput.value.trim().length > 0;
+            }
+
+            tokenToggle.addEventListener('click', () => {
+                const show = tokenInput.type === 'password';
+                tokenInput.type = show ? 'text' : 'password';
+                tokenToggle.textContent = show ? 'Sembunyikan' : 'Lihat';
+            });
+
             function handleFile(file) {
                 if (!file) return;
 
                 if (!file.type.startsWith('video/')) {
                     showMessage('Hanya file video (MP4, WEBM, dll) yang diperbolehkan!', 'error');
+                    return;
+                }
+
+                if (file.size > GUEST_MAX && !isOwner()) {
+                    showMessage('File lebih dari 50MB. Masukkan token owner untuk file besar.', 'error');
                     return;
                 }
 
@@ -441,6 +474,11 @@
                 // URL relatif agar ngikutin domain server
                 xhr.open('POST', endpointUrl, true);
                 xhr.responseType = 'blob';
+
+                // Kirim token owner sebagai header jika diisi
+                if (tokenInput.value.trim()) {
+                    xhr.setRequestHeader('X-Auth-Token', tokenInput.value.trim());
+                }
 
                 xhr.upload.onprogress = (e) => {
                     if (e.lengthComputable) {
@@ -525,7 +563,7 @@
                 currentFile = null;
                 fileInput.value = '';
                 fileNameDisplay.textContent = 'Pilih atau Tarik Video';
-                fileSizeDisplay.textContent = 'MP4 · WEBM · MOV — bisa untuk file besar';
+                fileSizeDisplay.textContent = 'MP4 · WEBM · MOV — max 50MB (token owner untuk 10GB)';
                 fileNameDisplay.classList.remove('text-white');
 
                 fileInfo.classList.add('hidden');
