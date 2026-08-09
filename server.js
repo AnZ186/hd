@@ -236,7 +236,14 @@ app.use((err, req, res, next) => {
 });
 
 // GANTI BAGIAN PALING BAWAH INI:
-app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server berjalan di PORT: ${PORT}`);
     console.log(`⚠️  PENTING: Pastikan program FFmpeg sudah terinstall di server!`);
 });
+
+// Naikkan timeout bawaan Node supaya upload besar / proses ffmpeg lama tidak
+// dianggap "Request aborted" oleh server. Node default requestTimeout = 5 menit.
+server.headersTimeout = 0;
+server.requestTimeout = 0;
+server.keepAliveTimeout = 0;
+server.setTimeout(0);
