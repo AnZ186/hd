@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Uploaded / processed video files
+uploads/
+*.mp4
+*.webm
+*.mov
+
+# Environment & secrets
+.env
+.env.*
+*.local
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+
+# Node
+package-lock.json.hash
