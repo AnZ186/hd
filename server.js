@@ -223,6 +223,14 @@ app.use((err, req, res, next) => {
     if (err.message && err.message.includes('Tipe file tidak diizinkan')) {
         return res.status(400).json({ error: err.message });
     }
+    // Client membatalkan upload di tengah jalan (tab ditutup / koneksi putus).
+    // Ini bukan kesalahan server — jangan balas 500, cukup bersihkan file.
+    if (err.code === 'REQUEST_ABORTED' || (err.message && /aborted|closed/i.test(err.message))) {
+        if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+        console.log('[-] Upload dibatalkan client:', err.message);
+        if (!res.headersSent) res.end();
+        return;
+    }
     console.error('[-] Unhandled error:', err);
     res.status(500).json({ error: 'Terjadi kesalahan pada server.' });
 });
