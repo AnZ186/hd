@@ -1,10 +1,14 @@
 const express = require('express');
 const multer = require('multer');
 const ffmpeg = require('fluent-ffmpeg');
+const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
 const fs = require('fs');
 const path = require('path');
 
 const aibanto = require('./aibanto.js');
+
+// Pakai binary ffmpeg yang ikut terbundle di node_modules (tidak butuh apt install)
+ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
